@@ -1,14 +1,14 @@
 fn main() {
-    print("1. Soy Vaso hablando nativo");
+    print("Iniciando conteo...");
+    
+    var contador := 0;
 
-    // Bloque Python (Interoperabilidad)
-    // Usamos ; al final para separar las instrucciones
-    use(python): {
-        print("2. Soy Python ejecutado desde dentro de Vaso");
-        import math;
-        print("   Pi desde Python es:");
-        print(math.pi);
+    while contador < 5 {
+        print("Contador:");
+        print(contador); 
+        
+        contador += 1; 
     }
 
-    print("3. Volvemos a Vaso. Fin.");
+    print("🚀 Vaso es Turing Completo. ¡Lo Logramos!");
 }
