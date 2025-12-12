@@ -74,7 +74,9 @@ fn main() {
 
 Here is the Vaso Compiler (v0.1) successfully parsing the demo code, recognizing tokens, and handling the custom 5-state logic:
 
-![Vaso Compiler Run](assets/demo_run.png)
+[Vaso Compiler Run](assets/demo_run.png)
+
+
 
 ## 🤝 Contribution & Acknowledgments
 
