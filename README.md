@@ -72,8 +72,13 @@ fn main() {
 
 ## 📸 System Architecture & Demos
 
+### Phase 4: The Chameleon Bridge (v0.4) - Interoperability 🐍
+**Breaking Barriers.** Vaso now acts as a multi-language orchestrator. The `use(python)` block allows seamless embedding and execution of external Python scripts directly within Vaso code. This proves the "Glue Language" concept, leveraging the entire Python ecosystem (Math, AI, Data Science) from a high-performance Rust core without syntax friction.
+
+![Vaso Python Bridge](assets/demo_bridge.png)
+
 ### Phase 3: Logic Core (v0.3) - Intelligent Branching 🧠
-**Current State.** The engine has evolved into a decision-making machine. Vaso now supports **Memory Management** (`HashMap`) and **Control Flow** (`if/else`). It correctly interprets the custom 5-state variables (`vbit`) and executes specific code blocks based on logic, skipping false conditions.
+The engine has evolved into a decision-making machine. Vaso now supports **Memory Management** (`HashMap`) and **Control Flow** (`if/else`). It correctly interprets the custom 5-state variables (`vbit`) and executes specific code blocks based on logic, skipping false conditions.
 
 ![Vaso Logic Core](assets/demo_logic.png)
 
@@ -86,8 +91,6 @@ The first implementation of the linear interpreter. Capable of allocating memory
 The foundation. Under the hood, Vaso uses a custom Lexer built with `Logos` in Rust to break down source code into atomic tokens, optimizing for Windows/Linux environments and recognizing the custom syntax.
 
 ![Vaso Lexer Analysis](assets/demo_run.png)
-
-
 ## 🤝 Contribution & Acknowledgments
 
 **Created by Fabian Fray.**
