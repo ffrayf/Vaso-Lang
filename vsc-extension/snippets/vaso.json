@@ -1,0 +1,27 @@
+{
+    "Main Function": {
+        "prefix": "fnmain",
+        "body": [
+            "fn main() {",
+            "\t$1",
+            "}"
+        ],
+        "description": "Creates the main entry point function."
+    },
+    "While Loop": {
+        "prefix": "whl",
+        "body": [
+            "while ${1:condition} {",
+            "\t$2",
+            "}"
+        ],
+        "description": "Creates a while loop."
+    },
+    "Print Statement": {
+        "prefix": "prt",
+        "body": [
+            "print(${1:message})"
+        ],
+        "description": "Prints a message or variable value."
+    }
+}
