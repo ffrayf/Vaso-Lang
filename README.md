@@ -77,27 +77,27 @@ fn main() {
 **Key Milestone.** The Vaso engine is now functionally **Turing Complete**. It features support for **While Loops**, **Mutable Variables** (`var`), and **Re-assignment** logic (`+=`), enabling algorithmic repetition and complex computation.
 
 
-[Vaso Turing Logic Output](assets/demo_v05_turing.png)
+![Vaso Turing Logic Output](assets/demo_v05_turing.png)
 
 ### Phase 4: The Chameleon Bridge (v0.4) - Interoperability 🐍
 **Breaking Barriers.** Vaso acts as a multi-language orchestrator. The `use(python)` block allows seamless embedding and execution of external Python scripts directly within Vaso code. This proves the "Glue Language" concept.
 
-[Vaso Python Bridge](assets/demo_bridge.png)
+![Vaso Python Bridge](assets/demo_bridge.png)
 
 ### Phase 3: Logic Core (v0.3) - Intelligent Branching 🧠
 The engine evolved into a decision-making machine. Vaso supports **Memory Management** (`HashMap`) and **Control Flow** (`if/else`).
 
-[Vaso Logic Core](assets/demo_logic.png)
+![Vaso Logic Core](assets/demo_logic.png)
 
 ### Phase 2: The Engine (v0.2) - Live Execution
 The first implementation of the linear interpreter. Capable of allocating memory variables and executing standard output instructions.
 
-[Vaso Engine Execution](assets/demo_run_v0.2.png)
+![Vaso Engine Execution](assets/demo_run_v0.2.png)
 
 ### Phase 1: The Lexer (v0.1) - Tokenization
 The foundation. Vaso uses a custom Lexer built with `Logos` in Rust to break down source code into atomic tokens.
 
-[Vaso Lexer Analysis](assets/demo_run.png)
+![Vaso Lexer Analysis](assets/demo_run.png)
 
 ## 🤝 Contribution & Acknowledgments
 
