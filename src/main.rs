@@ -2,8 +2,9 @@ use logos::Logos;
 use colored::*;
 use std::env;
 use std::fs;
+use std::collections::HashMap; // Importamos la memoria RAM
 
-#[derive(Logos, Debug, PartialEq)]
+#[derive(Logos, Debug, PartialEq, Clone)] // Agregamos Clone para poder guardar tokens
 enum Token {
     // Palabras clave
     #[token("fn")] Function,
@@ -23,7 +24,7 @@ enum Token {
     // Símbolos
     #[token(":=")] Assign,
     #[token(":")] Colon,
-    #[token(".")] Dot,      // <-- ¡AQUÍ ESTÁ EL PUNTO QUE FALTABA!
+    #[token(".")] Dot,
     #[token("{")] LBrace,
     #[token("}")] RBrace,
     #[token("(")] LParen,
@@ -36,25 +37,25 @@ enum Token {
     #[regex("[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())] Identifier(String),
     #[regex("\"[^\"]*\"", |lex| lex.slice().to_string())] StringLiteral(String),
 
-    // Ignorar basura (Espacios, Tabs, Saltos de linea Windows/Linux)
+    // Ignorar basura
     #[regex(r"[ \t\n\f\r]+", logos::skip)]
     #[regex(r"//.*", logos::skip)] 
     Error,
 }
 
 fn main() {
-    println!("{}", "\n🥃  VASO COMPILER v0.1 (Rusty Engine)".bold().cyan());
+    println!("{}", "\n🥃  VASO ENGINE v0.2 (Live Execution)".bold().cyan());
     println!("{}", "========================================".cyan());
 
+    // 1. Leer argumentos
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         println!("{}", "❌ Error: Falta el archivo.".red());
         return;
     }
-
     let filename = &args[1];
-    println!("📄 Leyendo: {}", filename.yellow());
-
+    
+    // 2. Leer archivo
     let code = match fs::read_to_string(filename) {
         Ok(c) => c,
         Err(_) => {
@@ -63,47 +64,69 @@ fn main() {
         }
     };
 
-    let lexer = Token::lexer(&code);
+    // 3. Tokenizar (Convertimos todo el código a una lista lista para usar)
+    let tokens: Vec<Token> = Token::lexer(&code)
+        .filter_map(Result::ok) 
+        .collect();
 
-    println!("\n🔍  Análisis de Tokens:");
-    println!("---------------------");
+    // 4. Inicializar Memoria RAM
+    let mut memory: HashMap<String, String> = HashMap::new();
 
-    for token in lexer {
-        match token {
-            // Palabras clave coloreadas
-            Ok(Token::Function) => print!("{} ", "FN".blue().bold()),
-            Ok(Token::Value) => print!("{} ", "VAL".green().bold()),
-            Ok(Token::Variable) => print!("{} ", "VAR".green()),
-            Ok(Token::Print) => print!("{} ", "PRINT".cyan()),
-            Ok(Token::Use) => print!("{} ", "USE".yellow()),
-            Ok(Token::If) => print!("{} ", "IF".magenta()),
-            Ok(Token::Else) => print!("{} ", "ELSE".magenta()),
-            Ok(Token::Match) => print!("{} ", "MATCH".magenta().bold()),
-            Ok(Token::Case) => print!("{} ", "CASE".magenta()),
+    println!("⚙️  Ejecutando programa Vaso...\n");
+    println!("--- SALIDA DEL PROGRAMA ---");
+
+    // 5. BUCLE DE EJECUCIÓN (INTÉRPRETE)
+    let mut i = 0;
+    while i < tokens.len() {
+        match &tokens[i] {
             
-            // Tipos Vaso
-            Ok(Token::VBitType) => print!("{} ", "TYPE:VBIT".purple().bold()),
-            Ok(Token::VBitLiteral(n)) => print!("{} ", format!("<BIT:{}>", n).purple()),
+            // CASO: PRINT
+            // Buscamos: print ( "texto" ) ;
+            Token::Print => {
+                if let Some(Token::LParen) = tokens.get(i+1) {
+                    match tokens.get(i+2) {
+                        // Si es texto literal: print("Hola")
+                        Some(Token::StringLiteral(texto)) => {
+                            println!("{}", texto.trim_matches('"'));
+                        },
+                        // Si es variable: print(x)
+                        Some(Token::Identifier(nombre)) => {
+                            if let Some(valor) = memory.get(nombre) {
+                                println!("{}", valor);
+                            } else {
+                                println!("⚠️ Error: Variable '{}' no existe", nombre);
+                            }
+                        },
+                        _ => {}
+                    }
+                    // Avanzamos el cursor (Print + ( + Contenido + ) + ;)
+                    // Nota: Esto es simplificado, asume que siempre hay punto y coma
+                }
+                // Avanzamos manual para no quedarnos pegados
+                i += 1; 
+            },
 
-            // Datos
-            Ok(Token::Identifier(s)) => print!("ID({}) ", s),
-            Ok(Token::StringLiteral(s)) => print!("\"{}\" ", s.italic()),
+            // CASO: ASIGNACIÓN (VAL)
+            // Buscamos: val x := "valor" ;
+            Token::Value => {
+                if let (Some(Token::Identifier(nombre)), Some(Token::Assign), Some(Token::StringLiteral(valor))) = 
+                       (tokens.get(i+1), tokens.get(i+2), tokens.get(i+3)) {
+                    
+                    // Guardamos en la memoria del HashMap
+                    memory.insert(nombre.clone(), valor.trim_matches('"').to_string());
+                    
+                    // Avanzamos más rápido porque ya leímos 4 tokens
+                    i += 4;
+                    continue; 
+                }
+                i += 1;
+            },
 
-            // Símbolos limpios
-            Ok(Token::Assign) => print!(":= "),
-            Ok(Token::Colon) => print!(": "),
-            Ok(Token::Dot) => print!("."), // <-- ¡AQUÍ IMPRIMIMOS EL PUNTO!
-            Ok(Token::LBrace) => print!("{{ "),
-            Ok(Token::RBrace) => print!("}} "),
-            Ok(Token::LParen) => print!("( "),
-            Ok(Token::RParen) => print!(") "),
-            Ok(Token::Equals) => print!("== "),
-            Ok(Token::Semicolon) => println!(";"), // Salto de línea
-
-            // Cualquier otra cosa
-            Ok(t) => print!("{:?} ", t),
-            Err(_) => print!("{}", "?? ".red()),
+            // Si es otra cosa, seguimos avanzando
+            _ => i += 1,
         }
     }
-    println!("\n---------------------\n✅ Compilación Exitosa.");
+
+    println!("---------------------------");
+    println!("{}", "\n✅ Ejecución finalizada.".green());
 }

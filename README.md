@@ -70,12 +70,17 @@ fn main() {
 ```
 
 
-## 📸 Demo Output
+## 📸 System Architecture & Demos
 
-Here is the Vaso Compiler (v0.1) successfully parsing the demo code, recognizing tokens, and handling the custom 5-state logic:
+### Phase 2: The Engine (v0.2) - Live Execution
+The current version implements a linear interpreter in Rust, capable of memory allocation (`HashMap`) and standard output. It successfully executes Vaso code files natively.
 
-![Vaso Compiler Run](assets/demo_run.png)
+![Vaso Engine Execution](assets/demo_run_v0.2.png)
 
+### Phase 1: The Lexer (v0.1) - Tokenization
+Under the hood, Vaso uses a custom Lexer built with `Logos` to break down source code into atomic tokens, recognizing the custom 5-state logic types (`<BIT:3>`) and syntax keywords.
+
+![Vaso Lexer Analysis](assets/demo_run.png)
 
 
 ## 🤝 Contribution & Acknowledgments
