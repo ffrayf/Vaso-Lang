@@ -1,0 +1,8 @@
+[package]
+name = "vaso"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+logos = "0.13"     # Para leer el código Vaso rápido
+colored = "2.0"    # Para ponerle color (Salsa) a la terminal
