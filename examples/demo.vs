@@ -1,4 +1,3 @@
-```vaso
 // Vaso Language Demo
 // "Keep it Simple" Philosophy
 
