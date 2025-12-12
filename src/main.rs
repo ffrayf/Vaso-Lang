@@ -2,9 +2,9 @@ use logos::Logos;
 use colored::*;
 use std::env;
 use std::fs;
-use std::collections::HashMap; // Importamos la memoria RAM
+use std::collections::HashMap;
 
-#[derive(Logos, Debug, PartialEq, Clone)] // Agregamos Clone para poder guardar tokens
+#[derive(Logos, Debug, PartialEq, Clone)]
 enum Token {
     // Palabras clave
     #[token("fn")] Function,
@@ -30,7 +30,7 @@ enum Token {
     #[token("(")] LParen,
     #[token(")")] RParen,
     #[token(";")] Semicolon,
-    #[token("==")] Equals,
+    #[token("==")] Equals, // Importante para comparar
     #[token("->")] Arrow,
 
     // Identificadores y Texto
@@ -44,10 +44,9 @@ enum Token {
 }
 
 fn main() {
-    println!("{}", "\n🥃  VASO ENGINE v0.2 (Live Execution)".bold().cyan());
-    println!("{}", "========================================".cyan());
+    println!("{}", "\n🥃  VASO ENGINE v0.3 (Logic Core)".bold().cyan());
+    println!("{}", "======================================".cyan());
 
-    // 1. Leer argumentos
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         println!("{}", "❌ Error: Falta el archivo.".red());
@@ -55,78 +54,99 @@ fn main() {
     }
     let filename = &args[1];
     
-    // 2. Leer archivo
     let code = match fs::read_to_string(filename) {
         Ok(c) => c,
-        Err(_) => {
-            println!("{}", "❌ Error leyendo el archivo.".red());
-            return;
-        }
+        Err(_) => { return; }
     };
 
-    // 3. Tokenizar (Convertimos todo el código a una lista lista para usar)
-    let tokens: Vec<Token> = Token::lexer(&code)
-        .filter_map(Result::ok) 
-        .collect();
-
-    // 4. Inicializar Memoria RAM
+    let tokens: Vec<Token> = Token::lexer(&code).filter_map(Result::ok).collect();
     let mut memory: HashMap<String, String> = HashMap::new();
 
-    println!("⚙️  Ejecutando programa Vaso...\n");
-    println!("--- SALIDA DEL PROGRAMA ---");
+    println!("⚙️  Ejecutando lógica condicional...\n");
+    println!("--- CONSOLA ---");
 
-    // 5. BUCLE DE EJECUCIÓN (INTÉRPRETE)
     let mut i = 0;
     while i < tokens.len() {
         match &tokens[i] {
             
             // CASO: PRINT
-            // Buscamos: print ( "texto" ) ;
             Token::Print => {
                 if let Some(Token::LParen) = tokens.get(i+1) {
                     match tokens.get(i+2) {
-                        // Si es texto literal: print("Hola")
-                        Some(Token::StringLiteral(texto)) => {
-                            println!("{}", texto.trim_matches('"'));
-                        },
-                        // Si es variable: print(x)
+                        Some(Token::StringLiteral(texto)) => println!("{}", texto.trim_matches('"')),
                         Some(Token::Identifier(nombre)) => {
                             if let Some(valor) = memory.get(nombre) {
                                 println!("{}", valor);
                             } else {
-                                println!("⚠️ Error: Variable '{}' no existe", nombre);
+                                println!("⚠️ Variable '{}' vacía", nombre);
                             }
                         },
                         _ => {}
                     }
-                    // Avanzamos el cursor (Print + ( + Contenido + ) + ;)
-                    // Nota: Esto es simplificado, asume que siempre hay punto y coma
                 }
-                // Avanzamos manual para no quedarnos pegados
                 i += 1; 
             },
 
             // CASO: ASIGNACIÓN (VAL)
-            // Buscamos: val x := "valor" ;
             Token::Value => {
+                // Opción A: val x := "texto"
                 if let (Some(Token::Identifier(nombre)), Some(Token::Assign), Some(Token::StringLiteral(valor))) = 
                        (tokens.get(i+1), tokens.get(i+2), tokens.get(i+3)) {
-                    
-                    // Guardamos en la memoria del HashMap
                     memory.insert(nombre.clone(), valor.trim_matches('"').to_string());
-                    
-                    // Avanzamos más rápido porque ya leímos 4 tokens
-                    i += 4;
-                    continue; 
+                    i += 4; continue; 
+                }
+                // Opción B: val x : vbit = 3 (Simulamos que guarda el número como texto por ahora)
+                if let (Some(Token::Identifier(nombre)), Some(Token::Colon), Some(Token::VBitType), Some(Token::Assign), Some(Token::VBitLiteral(valor))) =
+                       (tokens.get(i+1), tokens.get(i+2), tokens.get(i+3), tokens.get(i+4), tokens.get(i+5)) {
+                     memory.insert(nombre.clone(), valor.to_string());
+                     i += 6; continue;
                 }
                 i += 1;
             },
 
-            // Si es otra cosa, seguimos avanzando
+            // CASO: IF (EL CEREBRO NUEVO) 🧠
+            // Estructura: if variable == valor {
+            Token::If => {
+                let mut condition_true = false;
+
+                // 1. Analizamos la condición: if variable == valor
+                if let (Some(Token::Identifier(var_name)), Some(Token::Equals), Some(Token::VBitLiteral(val_num))) = 
+                       (tokens.get(i+1), tokens.get(i+2), tokens.get(i+3)) {
+                    
+                    // Buscamos la variable en memoria
+                    if let Some(memory_val) = memory.get(var_name) {
+                        // Comparamos si lo que hay en memoria es igual a lo que pide el IF
+                        if memory_val == &val_num.to_string() {
+                            condition_true = true;
+                        }
+                    }
+                }
+
+                // 2. Tomamos la decisión
+                if condition_true {
+                    // Si es VERDADERO: Simplemente avanzamos y dejamos que el código se ejecute normal
+                    // Avanzamos 'if', 'var', '==', 'valor', '{' (5 tokens)
+                    i += 5; 
+                } else {
+                    // Si es FALSO: Tenemos que SALTAR hasta encontrar la llave de cierre '}'
+                    // Ignoramos todo el bloque de código
+                    let mut brackets = 1;
+                    i += 5; // Entramos al bloque virtualmente
+                    while i < tokens.len() && brackets > 0 {
+                        i += 1;
+                        match tokens.get(i) {
+                            Some(Token::LBrace) => brackets += 1, // Encontramos otro { anidado
+                            Some(Token::RBrace) => brackets -= 1, // Encontramos el } de cierre
+                            _ => {}
+                        }
+                    }
+                    // Al salir del while, estamos en el '}', así que seguimos desde ahí
+                }
+            },
+
             _ => i += 1,
         }
     }
-
-    println!("---------------------------");
-    println!("{}", "\n✅ Ejecución finalizada.".green());
+    println!("---------------");
+    println!("{}", "\n✅ Lógica finalizada.".green());
 }

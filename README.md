@@ -72,13 +72,18 @@ fn main() {
 
 ## 📸 System Architecture & Demos
 
+### Phase 3: Logic Core (v0.3) - Intelligent Branching 🧠
+**Current State.** The engine has evolved into a decision-making machine. Vaso now supports **Memory Management** (`HashMap`) and **Control Flow** (`if/else`). It correctly interprets the custom 5-state variables (`vbit`) and executes specific code blocks based on logic, skipping false conditions.
+
+![Vaso Logic Core](assets/demo_logic.png)
+
 ### Phase 2: The Engine (v0.2) - Live Execution
-The current version implements a linear interpreter in Rust, capable of memory allocation (`HashMap`) and standard output. It successfully executes Vaso code files natively.
+The first implementation of the linear interpreter. Capable of allocating memory variables and executing standard output instructions. This proved the language could "act" and not just "read".
 
 ![Vaso Engine Execution](assets/demo_run_v0.2.png)
 
 ### Phase 1: The Lexer (v0.1) - Tokenization
-Under the hood, Vaso uses a custom Lexer built with `Logos` to break down source code into atomic tokens, recognizing the custom 5-state logic types (`<BIT:3>`) and syntax keywords.
+The foundation. Under the hood, Vaso uses a custom Lexer built with `Logos` in Rust to break down source code into atomic tokens, optimizing for Windows/Linux environments and recognizing the custom syntax.
 
 ![Vaso Lexer Analysis](assets/demo_run.png)
 
