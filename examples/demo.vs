@@ -1,14 +1,29 @@
 fn main() {
-    print("Iniciando conteo...");
+    print("--- VASO CALCULATOR ---");
     
-    var contador := 0;
+    // 1. Probamos el Input
+    print("Escribe un numero inicial (ej. 10):");
+    var x := input;
 
-    while contador < 5 {
-        print("Contador:");
-        print(contador); 
-        
-        contador += 1; 
+    print("Multiplicando por 2...");
+    
+    // 2. Probamos Multiplicación (*=)
+    x *= 2;
+    print("Resultado:");
+    print(x);
+
+    print("Restando 5...");
+    
+    // 3. Probamos Resta (-=)
+    x -= 5;
+    print(x);
+
+    // 4. Bucle Inverso (Cuenta regresiva)
+    print("Iniciando cuenta regresiva...");
+    while x > 0 {
+        print(x);
+        x -= 5; // Bajamos de 5 en 5
     }
 
-    print("🚀 Vaso es Turing Completo. ¡Lo Logramos!");
+    print("🚀 Fin del programa.");
 }

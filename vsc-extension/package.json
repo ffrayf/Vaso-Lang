@@ -4,6 +4,10 @@
     "description": "Language support for the Vaso Programming Language (v0.5.0), built with Socratic Simplicity and Quantum-Ready V-Bit Logic.",
     "version": "0.5.0",
     "publisher": "FabianFray",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/ffrayf/Vaso-Lang"
+    },
     "engines": {
         "vscode": "^1.60.0"
     },
