@@ -1,0 +1,41 @@
+{
+  "scopeName": "source.vaso",
+  "patterns": [
+    {
+      "comment": "Comentarios",
+      "match": "//.*$",
+      "name": "comment.line.double-slash.vaso"
+    },
+    {
+      "comment": "Keywords de control",
+      "match": "\\b(if|else|while|for|in|return|match)\\b",
+      "name": "keyword.control.vaso"
+    },
+    {
+      "comment": "Definiciones y Tipos",
+      "match": "\\b(fn|var|mold|new)\\b",
+      "name": "storage.type.vaso"
+    },
+    {
+      "comment": "Funciones del sistema",
+      "match": "\\b(print|input|sleep|now|random|exec)\\b",
+      "name": "support.function.vaso"
+    },
+    {
+      "comment": "Strings",
+      "begin": "\"",
+      "end": "\"",
+      "name": "string.quoted.double.vaso"
+    },
+    {
+      "comment": "Numeros",
+      "match": "\\b[0-9]+\\b",
+      "name": "constant.numeric.vaso"
+    },
+    {
+      "comment": "V-Bits Literales",
+      "match": "\\b(on|off|loading|error)\\b",
+      "name": "constant.language.vaso"
+    }
+  ]
+}

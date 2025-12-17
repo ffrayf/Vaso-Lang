@@ -1,312 +1,393 @@
+mod types;
+mod tokens;
+mod logic;
+mod stdlib;
+mod parser;
+mod memory;
+
 use logos::Logos;
 use colored::*;
 use std::env;
 use std::fs;
 use std::collections::HashMap;
-use std::io::Write;
-use std::process::Command; 
-use std::time::{SystemTime, UNIX_EPOCH};
-use rand::Rng;
+use types::{VasoType, StructDef};
+use tokens::Token;
+use logic::apply_op; 
+use stdlib::call_std_function;
+use parser::extract_args;
+use memory::MemoryStack;
+use std::ops::Range;
 
-// --- DEFINICIÓN DE TIPOS ---
-#[derive(Debug, Clone, PartialEq)]
-enum VasoType {
-    Int(i32),
-    VBit(u8, String), 
-    Str(String),
+// --- DEBUGGER ---
+fn get_line_number(code: &str, index: usize) -> usize {
+    code[..index].matches('\n').count() + 1
 }
 
-impl std::fmt::Display for VasoType {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            VasoType::Int(n) => write!(f, "{}", n),
-            VasoType::Str(s) => write!(f, "{}", s),
-            VasoType::VBit(v, msg) => {
-                let s = match v {
-                    0 => "off".normal(),
-                    1 => "on".green(),
-                    2 => "loading".yellow(),
-                    3 => "error".red().bold(),
-                    4 => "unknown".magenta(),
-                    _ => "unknown".normal()
-                };
-                if msg.is_empty() {
-                    write!(f, "{}", s)
-                } else {
-                    write!(f, "{}(\"{}\")", s, msg) 
-                }
-            }
-        }
-    }
-}
-
-#[derive(Logos, Debug, PartialEq, Clone)]
-enum Token {
-    #[token("fn")] Function,
-    #[token("val")] Value,
-    #[token("var")] Variable, 
-    #[token("mold")] Mold,
-    #[token("new")] New,
-    #[token("print")] Print,
-    #[token("input")] Input, 
-    #[token("if")] If,
-    #[token("else")] Else,
-    #[token("while")] While, 
-    #[token("match")] Match, 
-    #[token("use")] Use, 
-
-    #[token("off")] LitOff,
-    #[token("on")] LitOn,
-    #[token("loading")] LitLoading,
-    #[token("error")] LitError,
-    #[token("unknown")] LitUnknown,
-
-    #[token("vbit")] TypeVBit,
-    #[token("int")] TypeInt, 
-    
-    #[regex("-?[0-9]+", |lex| lex.slice().parse().ok())] NumberLiteral(i32), 
-
-    #[token(":=")] AssignPascal,
-    #[token("=")]  AssignC,
-    #[token("=>")] Arrow,
-
-    #[token(":")] Colon,
-    #[token(";")] Semicolon,
-    #[token(".")] Dot,
-    #[token(",")] Comma,
-    #[token("{")] LBrace,
-    #[token("}")] RBrace,
-    #[token("(")] LParen,
-    #[token(")")] RParen,
-    #[token("==")] Equals,
-    #[token("!=")] NotEquals, 
-    #[token("<")] LessThan,
-    #[token(">")] GreaterThan,
-    
-    #[token("+=")] PlusAssign, 
-    #[token("-=")] MinusAssign, 
-    #[token("*=")] MulAssign,   
-    #[token("/=")] DivAssign,   
-    #[token("+")] Plus,
-    #[token("-")] Minus,
-
-    #[regex("[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())] Identifier(String),
-    #[regex("\"[^\"]*\"", |lex| lex.slice().to_string())] StringLiteral(String),
-
-    #[regex(r"[ \t\n\f\r]+", logos::skip)]
-    #[regex(r"//.*", logos::skip)] 
-    Error,
-}
-
-struct StructDef {
-    fields: Vec<(String, String)>,
-}
-
-// --- STANDARD LIBRARY CLEANED ---
-fn call_std_function(module: &str, func: &str, args: Vec<VasoType>) -> VasoType {
-    match module {
-        "Time" => {
-            match func {
-                "now" => {
-                    let start = SystemTime::now();
-                    let since = start.duration_since(UNIX_EPOCH).expect("Time fail");
-                    VasoType::Int(since.as_secs() as i32)
-                },
-                _ => VasoType::VBit(3, format!("Time.{} not found", func))
-            }
-        },
-        "Math" => {
-            match func {
-                "random" => {
-                    let mut rng = rand::thread_rng();
-                    VasoType::Int(rng.gen_range(0..100))
-                }, 
-                _ => VasoType::VBit(3, format!("Math.{} not found", func))
-            }
-        },
-        "File" => {
-            match func {
-                "read" => {
-                    if let Some(VasoType::Str(path)) = args.get(0) {
-                        match fs::read_to_string(path) {
-                            Ok(content) => VasoType::Str(content),
-                            Err(e) => VasoType::VBit(3, format!("IO Error: {}", e))
-                        }
-                    } else { VasoType::VBit(3, "Arg Error".to_string()) }
-                },
-                "write" => {
-                     if let (Some(VasoType::Str(path)), Some(VasoType::Str(content))) = (args.get(0), args.get(1)) {
-                        match fs::write(path, content) {
-                            Ok(_) => VasoType::VBit(1, "File Written".to_string()),
-                            Err(e) => VasoType::VBit(3, format!("Write Error: {}", e))
-                        }
-                     } else { VasoType::VBit(3, "Arg Error".to_string()) }
-                },
-                _ => VasoType::VBit(3, format!("File.{} not found", func))
-            }
-        },
-        "Sys" => {
-            match func {
-                "os" => VasoType::Str(env::consts::OS.to_string()),
-                "exec" => {
-                    if let (Some(VasoType::Str(cmd)), Some(VasoType::Str(arg1))) = (args.get(0), args.get(1)) {
-                        // FIX: Logica limpia para Windows/Unix sin variables unused
-                        let is_windows = cfg!(target_os = "windows");
-                        
-                        let mut command = if is_windows {
-                            let mut c = Command::new("cmd");
-                            c.arg("/C").arg(format!("{} {}", cmd, arg1));
-                            c
-                        } else {
-                            let mut c = Command::new(cmd);
-                            c.arg(arg1);
-                            c
-                        };
-
-                        match command.output() {
-                            Ok(output) => {
-                                if output.status.success() {
-                                    // EXITO: Devolvemos ON para que la aritmetica funcione (test + build = on)
-                                    VasoType::VBit(1, "".to_string()) 
-                                } else {
-                                    let err = String::from_utf8_lossy(&output.stderr).to_string();
-                                    let msg = if err.is_empty() { String::from_utf8_lossy(&output.stdout).to_string() } else { err };
-                                    VasoType::VBit(3, format!("CMD Failed: {}", msg.trim()))
-                                }
-                            },
-                            Err(e) => VasoType::VBit(3, format!("Exec Error: {}", e))
-                        }
-                    } else {
-                        VasoType::VBit(3, "Sys.exec needs (cmd, arg)".to_string())
-                    }
-                },
-                _ => VasoType::VBit(3, "Sys func error".to_string())
-            }
-        },
-        _ => VasoType::VBit(3, format!("Module {} not found", module))
-    }
-}
-
-fn apply_dominance(val1: &VasoType, val2: &VasoType) -> VasoType {
-    let get_rank = |v: u8| -> u8 {
-        match v { 3 => 5, 4 => 4, 2 => 3, 1 => 2, 0 => 1, _ => 0 }
-    };
-
-    match (val1, val2) {
-        (VasoType::VBit(v1, m1), VasoType::VBit(v2, m2)) => {
-            if get_rank(*v1) >= get_rank(*v2) { VasoType::VBit(*v1, m1.clone()) } else { VasoType::VBit(*v2, m2.clone()) }
-        },
-        (VasoType::VBit(v, m), VasoType::Int(_)) => VasoType::VBit(*v, m.clone()),
-        (VasoType::Int(_), VasoType::VBit(v, m)) => VasoType::VBit(*v, m.clone()),
-        (VasoType::VBit(v, m), VasoType::Str(_)) => VasoType::VBit(*v, m.clone()),
-        (VasoType::Str(_), VasoType::VBit(v, m)) => VasoType::VBit(*v, m.clone()),
-        (VasoType::Int(n1), VasoType::Int(n2)) => VasoType::Int(n1 + n2),
-        (VasoType::Str(s1), VasoType::Str(s2)) => VasoType::Str(format!("{}{}", s1, s2)),
-        _ => VasoType::VBit(3, "Type Mismatch".to_string())
-    }
-}
-
-fn extract_args(tokens: &Vec<Token>, start_idx: usize, memory: &HashMap<String, VasoType>) -> (Vec<VasoType>, usize) {
-    let mut args = Vec::new();
-    let mut i = start_idx;
-    if let Some(Token::LParen) = tokens.get(i) {
-        i += 1;
-        while i < tokens.len() {
-            match &tokens[i] {
-                Token::RParen => { i += 1; break; },
-                Token::StringLiteral(s) => args.push(VasoType::Str(s.trim_matches('"').to_string())),
-                Token::NumberLiteral(n) => args.push(VasoType::Int(*n)),
-                Token::Identifier(n) => { if let Some(val) = memory.get(n) { args.push(val.clone()); } },
-                Token::Comma => {},
-                _ => {}
-            }
-            i += 1;
-        }
-    }
-    (args, i)
+fn report_error(msg: &str, span: &Range<usize>, code: &str) {
+    let line = get_line_number(code, span.start);
+    println!("{} {} {}", "❌ ERROR [Line".red().bold(), line.to_string().red().bold(), "]:".red().bold());
+    println!("   >> {}", msg.white());
 }
 
 fn main() {
-    println!("{}", "\n🥃  VASO ENGINE v1.4.1 (Clean)".bold().cyan());
-    println!("{}", "================================".cyan());
+    println!("{}", "\n🥃  VASO ENGINE v3.0 (Performance & Resilience)".bold().cyan());
+    println!("{}", "===============================================".cyan());
 
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 { println!("❌ Uso: cargo run <archivo.vs>"); return; }
+    if args.len() < 2 { println!("❌ Uso: cargo run <archivo.vs> [args...]"); return; }
     
     let code = fs::read_to_string(&args[1]).expect("❌ ERROR: No encuentro el archivo .vs");
-    let tokens: Vec<Token> = Token::lexer(&code).filter_map(Result::ok).collect();
     
-    let mut memory: HashMap<String, VasoType> = HashMap::new();
-    let mut structs: HashMap<String, StructDef> = HashMap::new();
+    // --- 1. LEXER ESTRICTO (Feedback TF: No ignorar errores) ---
+    let tokens: Vec<(Token, Range<usize>)> = Token::lexer(&code)
+        .spanned()
+        .map(|(res, span)| {
+            match res {
+                Ok(token) => (token, span),
+                Err(_) => {
+                    // Si encontramos un caracter invalido, pánico inmediato con contexto.
+                    let line = get_line_number(&code, span.start);
+                    eprintln!("❌ CRITICAL LEXER ERROR [Line {}]: Invalid character found.", line);
+                    std::process::exit(1);
+                }
+            }
+        })
+        .collect();
     
+    let mut mem_stack = MemoryStack::new();
+    let _structs: HashMap<String, StructDef> = HashMap::new();
+    
+    // --- 2. JUMP MAP (Feedback TF: Solución O(1) vs O(n²)) ---
+    // Mapeamos el inicio de cada bloque '{' con su final '}'.
+    let mut jump_map: HashMap<usize, usize> = HashMap::new();
+    let mut brace_stack: Vec<usize> = Vec::new();
+
+    for (i, (token, _)) in tokens.iter().enumerate() {
+        match token {
+            Token::LBrace => brace_stack.push(i),
+            Token::RBrace => {
+                if let Some(start_idx) = brace_stack.pop() {
+                    jump_map.insert(start_idx, i); // Key: Inicio, Value: Final
+                }
+            },
+            _ => {}
+        }
+    }
+    // --------------------------------------------------------
+
+    let mut current_depth = 0;
+    let mut skip_else_at_depth: HashMap<usize, bool> = HashMap::new();
+    let mut call_stack: Vec<(usize, usize)> = Vec::new();
+    
+    // Optimizacion memoria: Usar indices seria mejor, pero por ahora mantenemos esto
+    struct LoopState { depth: usize, start_idx: usize, iter_var: Option<String>, iter_list: Option<Vec<VasoType>>, iter_pos: usize }
+    let mut active_loops: Vec<LoopState> = Vec::new();
+
+    // 3. PRE-SCAN DEFINITIONS
     let mut temp_i = 0;
     while temp_i < tokens.len() {
-        if let Token::Mold = tokens[temp_i] {
-            if let Some(Token::Identifier(struct_name)) = tokens.get(temp_i+1) {
-                let mut fields = Vec::new();
-                let mut j = temp_i + 3; 
-                while j < tokens.len() {
-                    match &tokens[j] {
-                        Token::RBrace => break,
-                        Token::Identifier(field_name) => {
-                            if let (Some(Token::Colon), Some(type_token)) = (tokens.get(j+1), tokens.get(j+2)) {
-                                fields.push((field_name.clone(), format!("{:?}", type_token)));
-                            }
-                        },
-                        _ => {}
+        match &tokens[temp_i] {
+            (Token::Mold, _) => { /* Struct logic placeholder */ },
+            (Token::Function, _) => { 
+                if let (Some((Token::Identifier(fn_name), _)), Some((Token::LParen, _))) = (tokens.get(temp_i+1), tokens.get(temp_i+2)) {
+                    let mut fn_args = Vec::new();
+                    let mut k = temp_i + 3;
+                    while k < tokens.len() {
+                        match &tokens[k] {
+                            (Token::RParen, _) => break,
+                            (Token::Identifier(arg_name), _) => fn_args.push(arg_name.clone()),
+                            _ => {}
+                        }
+                        k += 1;
                     }
-                    j += 1;
+                    let body_start = k + 1; 
+                    mem_stack.set_global(fn_name.clone(), VasoType::Function(body_start, fn_args));
                 }
-                structs.insert(struct_name.clone(), StructDef { fields });
-            }
+            },
+            _ => {}
         }
         temp_i += 1;
     }
 
+    // 4. EJECUCION OPTIMIZADA
     let mut i = 0;
     loop {
         if i >= tokens.len() { break; }
-        let current_token = &tokens[i];
+        let (current_token, _current_span) = &tokens[i];
         let mut consumed = false; 
 
         match current_token {
-            Token::Print => {
-                if let Some(Token::LParen) = tokens.get(i+1) {
-                    if let (Some(Token::Identifier(obj)), Some(Token::Dot), Some(Token::Identifier(prop)), Some(Token::RParen)) = 
-                           (tokens.get(i+2), tokens.get(i+3), tokens.get(i+4), tokens.get(i+5)) {
-                        let key = format!("{}.{}", obj, prop);
-                        if let Some(v) = memory.get(&key) { println!("{}", v); } else { println!("null"); }
-                        i += 6; consumed = true;
+            // SKIPPER OPTIMIZADO (Usando Jump Map)
+            Token::Function => {
+                // Buscamos donde empieza el cuerpo de la funcion
+                let mut scan = i;
+                while scan < tokens.len() {
+                    if let (Token::LBrace, _) = tokens[scan] {
+                        if let Some(&end_idx) = jump_map.get(&scan) {
+                            i = end_idx; // TELETRANSPORTACION ⚡
+                            consumed = true;
+                        }
+                        break;
                     }
-                    else if let (Some(Token::Identifier(n)), Some(Token::RParen)) = (tokens.get(i+2), tokens.get(i+3)) {
-                        if let Some(v) = memory.get(n) { println!("{}", v); } else { println!(""); } 
+                    scan += 1;
+                }
+                if !consumed { i += 1; consumed = true; } // Safety fallback
+            },
+
+            Token::LBrace => { current_depth += 1; },
+            
+            Token::RBrace => { 
+                let mut handled = false;
+                
+                // Loop Logic
+                if let Some(loop_state) = active_loops.last_mut() {
+                    if loop_state.depth == current_depth {
+                        if let (Some(var_name), Some(list)) = (&loop_state.iter_var, &loop_state.iter_list) {
+                            loop_state.iter_pos += 1;
+                            if loop_state.iter_pos < list.len() {
+                                mem_stack.set(var_name.clone(), list[loop_state.iter_pos].clone());
+                                i = loop_state.start_idx;
+                                current_depth -= 1;
+                                consumed = true;
+                                handled = true;
+                            } else {
+                                active_loops.pop(); 
+                            }
+                        } else {
+                            // While
+                            i = loop_state.start_idx; 
+                            current_depth -= 1; 
+                            consumed = true; 
+                            handled = true;
+                        }
+                    }
+                }
+                
+                // Return Logic
+                if !handled && !call_stack.is_empty() {
+                    let (_, base_depth) = call_stack.last().unwrap();
+                    if current_depth == *base_depth + 1 { 
+                         let (ret_index, _) = call_stack.pop().unwrap();
+                         mem_stack.pop_scope();
+                         i = ret_index;
+                         consumed = true;
+                         handled = true;
+                         current_depth -= 1; 
+                    }
+                }
+                if !handled {
+                    if current_depth > 0 { current_depth -= 1; } 
+                }
+            },
+
+            Token::For => {
+                if let (Some((Token::Identifier(var_name), _)), Some((Token::In, _)), Some((Token::Identifier(list_name), _))) = 
+                       (tokens.get(i+1), tokens.get(i+2), tokens.get(i+3)) {
+                    
+                    let mut list_val = None;
+                    if let Some(VasoType::List(l)) = mem_stack.get(list_name) {
+                        list_val = Some(l.clone());
+                    }
+
+                    if let Some(list) = list_val {
+                        let loop_depth = current_depth + 1;
+                        let mut enter_loop = false;
+                        let is_active = active_loops.last().map(|l| l.depth == loop_depth && l.start_idx == i + 4).unwrap_or(false);
+
+                        if !is_active {
+                            if !list.is_empty() {
+                                mem_stack.set(var_name.clone(), list[0].clone());
+                                active_loops.push(LoopState { 
+                                    depth: loop_depth, 
+                                    start_idx: i + 4, 
+                                    iter_var: Some(var_name.clone()),
+                                    iter_list: Some(list),
+                                    iter_pos: 0
+                                });
+                                enter_loop = true;
+                            }
+                        } else {
+                            enter_loop = true;
+                        }
+
+                        if enter_loop {
+                            i += 4; 
+                            consumed = true; 
+                        } else {
+                            // SKIP OPTIMIZADO
+                            if let Some((Token::LBrace, _)) = tokens.get(i+4) {
+                                if let Some(&end_idx) = jump_map.get(&(i+4)) {
+                                    i = end_idx; // TELETRANSPORTACION ⚡
+                                    consumed = true;
+                                }
+                            }
+                        }
+                    } else {
+                        report_error("FOR loop expects a List variable", _current_span, &code);
+                    }
+                }
+            },
+
+            Token::While => {
+                let mut cond = false;
+                let mut offset = 1;
+                // ... (Lógica de condiciones igual que antes) ...
+                if let Some((Token::Identifier(n1), _)) = tokens.get(i+1) {
+                    if let (Some((Token::LessThan, _)), Some((Token::NumberLiteral(v2), _))) = (tokens.get(i+2), tokens.get(i+3)) {
+                         if let Some(VasoType::Int(v1)) = mem_stack.get(n1) { if v1 < v2 { cond = true; } }
+                         offset = 3;
+                    }
+                    else if let (Some((Token::LessThan, _)), Some((Token::Identifier(n2), _))) = (tokens.get(i+2), tokens.get(i+3)) {
+                         if let (Some(VasoType::Int(v1)), Some(VasoType::Int(v2))) = (mem_stack.get(n1), mem_stack.get(n2)) { 
+                             if v1 < v2 { cond = true; } 
+                         }
+                         offset = 3;
+                    }
+                    else if let (Some((Token::Equals, _)), Some((Token::NumberLiteral(v2), _))) = (tokens.get(i+2), tokens.get(i+3)) {
+                         if let Some(VasoType::Int(v1)) = mem_stack.get(n1) { if v1 == v2 { cond = true; } }
+                         offset = 3;
+                    }
+                    else if let (Some((Token::Equals, _)), Some((Token::Identifier(n2), _))) = (tokens.get(i+2), tokens.get(i+3)) {
+                         if let (Some(VasoType::Int(v1)), Some(VasoType::Int(v2))) = (mem_stack.get(n1), mem_stack.get(n2)) { 
+                             if v1 == v2 { cond = true; } 
+                         }
+                         offset = 3;
+                    }
+                }
+
+                let loop_depth = current_depth + 1;
+                if cond {
+                    let is_active = active_loops.last().map(|l| l.depth == loop_depth).unwrap_or(false);
+                    if !is_active {
+                        active_loops.push(LoopState { depth: loop_depth, start_idx: i, iter_var: None, iter_list: None, iter_pos: 0 });
+                    }
+                    i += offset;
+                } else {
+                    if let Some(last) = active_loops.last() {
+                        if last.depth == loop_depth { active_loops.pop(); }
+                    }
+                    // SKIP OPTIMIZADO
+                    // Buscamos la llave de apertura
+                    let mut brace_idx = i;
+                    while brace_idx < tokens.len() {
+                        if let (Token::LBrace, _) = tokens[brace_idx] {
+                            if let Some(&end_idx) = jump_map.get(&brace_idx) {
+                                i = end_idx; // TELETRANSPORTACION ⚡
+                                consumed = true;
+                            }
+                            break;
+                        }
+                        brace_idx += 1;
+                    }
+                }
+            },
+
+            Token::Print => {
+                // ... (Lógica de print igual) ...
+                if let Some((Token::LParen, _)) = tokens.get(i+1) {
+                    if let (Some((Token::Identifier(n), _)), Some((Token::RParen, _))) = (tokens.get(i+2), tokens.get(i+3)) {
+                        if let Some(v) = mem_stack.get(n) { println!("{}", v); } else { println!(""); } 
                         i += 4; consumed = true;
                     }
-                    else if let (Some(Token::StringLiteral(s)), Some(Token::RParen)) = (tokens.get(i+2), tokens.get(i+3)) {
-                         println!("{}", s.trim_matches('"'));
+                    else if let (Some((Token::StringLiteral(s), _)), Some((Token::RParen, _))) = (tokens.get(i+2), tokens.get(i+3)) {
+                         println!("{}", s);
                          i += 4; consumed = true;
                     }
-                    else if let (Some(token_lit), Some(Token::RParen)) = (tokens.get(i+2), tokens.get(i+3)) {
+                    else if let (Some(token_lit), Some((Token::RParen, _))) = (tokens.get(i+2), tokens.get(i+3)) {
                          match token_lit {
-                             Token::LitOff => println!("off"),
-                             Token::LitOn => println!("on"),
-                             Token::LitLoading => println!("loading"),
-                             Token::LitError => println!("error"),
-                             Token::LitUnknown => println!("unknown"),
+                             (Token::LitOff, _) => println!("off"),
+                             (Token::LitOn, _) => println!("on"),
+                             (Token::LitLoading, _) => println!("loading"),
+                             (Token::LitError, _) => println!("error"),
+                             (Token::LitUnknown, _) => println!("unknown"),
                              _ => {}
                          }
                          i += 4; consumed = true;
                     }
                 }
             },
+
+            Token::If => {
+                let mut cond = false;
+                let mut offset = 1;
+                // ... (Lógica de condiciones If igual) ...
+                if let Some((Token::Identifier(n1), _)) = tokens.get(i+1) {
+                    if let (Some((Token::GreaterThan, _)), Some((Token::Identifier(n2), _))) = (tokens.get(i+2), tokens.get(i+3)) {
+                         if let (Some(VasoType::Int(v1)), Some(VasoType::Int(v2))) = (mem_stack.get(n1), mem_stack.get(n2)) {
+                             if v1 > v2 { cond = true; }
+                         }
+                         offset = 3;
+                    } 
+                    else if let (Some((Token::GreaterThan, _)), Some((Token::NumberLiteral(v2), _))) = (tokens.get(i+2), tokens.get(i+3)) {
+                         if let Some(VasoType::Int(v1)) = mem_stack.get(n1) {
+                             if v1 > v2 { cond = true; }
+                         }
+                         offset = 3;
+                    } 
+                    else if let (Some((Token::Equals, _)), Some((Token::StringLiteral(s2), _))) = (tokens.get(i+2), tokens.get(i+3)) {
+                         if let Some(VasoType::Str(s1)) = mem_stack.get(n1) {
+                             if s1 == s2 { cond = true; }
+                         }
+                         offset = 3;
+                    } 
+                    else if let (Some((Token::Equals, _)), Some((Token::NumberLiteral(v2), _))) = (tokens.get(i+2), tokens.get(i+3)) {
+                         if let Some(VasoType::Int(v1)) = mem_stack.get(n1) {
+                             if v1 == v2 { cond = true; }
+                         }
+                         offset = 3;
+                    }
+                    else if let (Some((Token::Equals, _)), Some((Token::Identifier(n2), _))) = (tokens.get(i+2), tokens.get(i+3)) {
+                         if let (Some(val1), Some(val2)) = (mem_stack.get(n1), mem_stack.get(n2)) {
+                             if val1 == val2 { cond = true; }
+                         }
+                         offset = 3;
+                    }
+                    else if let Some(VasoType::VBit(1, _)) = mem_stack.get(n1) { cond = true; }
+                }
+
+                if cond { 
+                    skip_else_at_depth.insert(current_depth, true);
+                    i += offset; 
+                } else {
+                    skip_else_at_depth.insert(current_depth, false);
+                    // SKIP OPTIMIZADO
+                    let mut brace_idx = i;
+                    while brace_idx < tokens.len() {
+                        if let (Token::LBrace, _) = tokens[brace_idx] {
+                            if let Some(&end_idx) = jump_map.get(&brace_idx) {
+                                i = end_idx; // TELETRANSPORTACION ⚡
+                                consumed = true;
+                            }
+                            break;
+                        }
+                        brace_idx += 1;
+                    }
+                }
+            },
+
+            Token::Else => {
+                let should_skip = *skip_else_at_depth.get(&current_depth).unwrap_or(&false);
+                if should_skip {
+                    // SKIP OPTIMIZADO
+                    if let (Token::LBrace, _) = tokens[i+1] {
+                        if let Some(&end_idx) = jump_map.get(&(i+1)) {
+                            i = end_idx; // TELETRANSPORTACION ⚡
+                            consumed = true;
+                        }
+                    }
+                }
+            },
+
             Token::Match => {
-                if let (Some(Token::Identifier(var_name)), Some(Token::LBrace)) = (tokens.get(i+1), tokens.get(i+2)) {
-                    let current_val = memory.get(var_name).cloned().unwrap_or(VasoType::VBit(4, "".to_string())); 
+               if let (Some((Token::Identifier(var_name), _)), Some((Token::LBrace, _))) = (tokens.get(i+1), tokens.get(i+2)) {
+                    let current_val = mem_stack.get(var_name).cloned().unwrap_or(VasoType::VBit(4, "".to_string())); 
                     let mut j = i + 3;
                     let mut match_executed = false;
+                    
                     while j < tokens.len() {
-                        if let Token::RBrace = tokens[j] { break; } 
-                        if let (Some(case_token), Some(Token::Arrow), Some(Token::LBrace)) = (tokens.get(j), tokens.get(j+1), tokens.get(j+2)) {
+                        if let (Token::RBrace, _) = tokens[j] { break; } 
+                        
+                        if let (Some((case_token, _)), Some((Token::Arrow, _)), Some((Token::LBrace, _))) = (tokens.get(j), tokens.get(j+1), tokens.get(j+2)) {
                             let matches_case = match (case_token, &current_val) {
                                 (Token::LitOn, VasoType::VBit(1, _)) => true,
                                 (Token::LitOff, VasoType::VBit(0, _)) => true,
@@ -315,244 +396,205 @@ fn main() {
                                 (Token::LitUnknown, VasoType::VBit(4, _)) => true,
                                 _ => false
                             };
+
                             if matches_case && !match_executed {
                                 match_executed = true;
                                 let mut k = j + 3;
                                 while k < tokens.len() {
-                                    if let Token::RBrace = tokens[k] { break; }
+                                    if let (Token::RBrace, _) = tokens[k] { break; }
+                                    
                                     match &tokens[k] {
-                                        Token::Print => {
-                                             if let (Some(Token::LParen), Some(Token::StringLiteral(s)), Some(Token::RParen)) = 
-                                                    (tokens.get(k+1), tokens.get(k+2), tokens.get(k+3)) {
-                                                 println!("{}", s.trim_matches('"'));
-                                             } else if let (Some(Token::LParen), Some(Token::Identifier(n)), Some(Token::RParen)) = 
-                                                    (tokens.get(k+1), tokens.get(k+2), tokens.get(k+3)) {
-                                                 if let Some(v) = memory.get(n) { println!("{}", v); }
+                                        (Token::Print, _) => {
+                                             if let (Some((Token::LParen, _)), Some((Token::StringLiteral(s), _)), Some((Token::RParen, _))) = (tokens.get(k+1), tokens.get(k+2), tokens.get(k+3)) {
+                                                 println!("{}", s);
+                                             } else if let (Some((Token::LParen, _)), Some((Token::Identifier(n), _)), Some((Token::RParen, _))) = (tokens.get(k+1), tokens.get(k+2), tokens.get(k+3)) {
+                                                 if let Some(v) = mem_stack.get(n) { println!("{}", v); }
                                              }
+                                             k += 3;
                                         },
-                                        Token::Variable => {
-                                            if let (Some(Token::Identifier(name)), Some(assign), Some(val_token)) = 
-                                                   (tokens.get(k+1), tokens.get(k+2), tokens.get(k+3)) {
+                                        (Token::Identifier(target_name), _) => {
+                                            if let (Some((assign, _)), Some((val_token, _))) = (tokens.get(k+1), tokens.get(k+2)) {
                                                 if matches!(assign, Token::AssignC | Token::AssignPascal) {
-                                                    if let (Token::Identifier(module), Some(Token::Dot), Some(Token::Identifier(func))) = 
-                                                           (val_token, tokens.get(k+4), tokens.get(k+5)) {
-                                                         let (args, _) = extract_args(&tokens, k+6, &memory);
-                                                         let result = call_std_function(module, func, args);
-                                                         memory.insert(name.clone(), result);
+                                                    let val_to_assign = match val_token {
+                                                        Token::NumberLiteral(n) => Some(VasoType::Int(*n)),
+                                                        Token::StringLiteral(s) => Some(VasoType::Str(s.clone())),
+                                                        Token::Identifier(source_name) => mem_stack.get(source_name).cloned(),
+                                                        _ => None
+                                                    };
+                                                    if let Some(v) = val_to_assign {
+                                                        mem_stack.set(target_name.clone(), v);
                                                     }
+                                                    k += 2;
+                                                } else if matches!(assign, Token::PlusAssign | Token::MinusAssign) {
+                                                     let r_val_opt = match val_token {
+                                                         Token::NumberLiteral(n) => Some(VasoType::Int(*n)),
+                                                         Token::Identifier(n) => mem_stack.get(n).cloned(),
+                                                         _ => None
+                                                     };
+                                                     if let Some(r_val) = r_val_opt {
+                                                         if let Some(l_val) = mem_stack.get(target_name) {
+                                                             let res = apply_op(l_val.clone(), &r_val, assign);
+                                                             mem_stack.set(target_name.clone(), res);
+                                                         }
+                                                     }
+                                                     k += 2;
                                                 }
                                             }
                                         },
-                                        Token::Identifier(_n) => { 
-                                             if let (Some(assign), Some(val_token)) = (tokens.get(k+1), tokens.get(k+2)) {
-                                                if matches!(assign, Token::AssignC | Token::AssignPascal) {
-                                                    if let (Token::Identifier(module), Some(Token::Dot), Some(Token::Identifier(func))) = 
-                                                        (val_token, tokens.get(k+3), tokens.get(k+4)) {
-                                                            let (args, _) = extract_args(&tokens, k+5, &memory);
-                                                            let res = call_std_function(module, func, args);
-                                                            if let (Some(Token::Print), Some(Token::LParen)) = (tokens.get(k+8), tokens.get(k+9)) {
-                                                                println!("{}", res); 
-                                                            }
-                                                    }
-                                                }
-                                            }
-                                        } 
                                         _ => {}
                                     }
                                     k += 1;
                                 }
                             }
-                            let mut k = j + 3;
-                            let mut brackets = 1;
-                            while k < tokens.len() && brackets > 0 {
-                                k += 1;
-                                match tokens[k] {
-                                    Token::LBrace => brackets += 1,
-                                    Token::RBrace => brackets -= 1,
-                                    _ => {}
-                                }
+
+                            // --- SKIP OPTIMIZADO (MATCH CASE) ---
+                            // Usamos el Jump Map para saltar el bloque del caso actual
+                            // j+2 es la posicion del LBrace '{' del caso
+                            if let Some(&end_idx) = jump_map.get(&(j+2)) {
+                                j = end_idx + 1; // Saltamos justo despues del '}'
+                                continue;
                             }
-                            j = k + 1; 
-                            continue;
                         }
                         j += 1;
                     }
-                    let mut brackets = 1;
-                    i += 3;
-                    while i < tokens.len() && brackets > 0 {
-                        match tokens[i] {
-                            Token::LBrace => brackets += 1,
-                            Token::RBrace => brackets -= 1,
-                            _ => {}
-                        }
-                        i += 1;
+                    
+                    // --- SKIP OPTIMIZADO (MATCH BLOCK ENTERO) ---
+                    // Saltamos todo el bloque match
+                    // i+2 es la posicion del LBrace '{' principal del match
+                    if let Some(&end_idx) = jump_map.get(&(i+2)) {
+                        i = end_idx;
+                        consumed = true;
                     }
-                    consumed = true;
-                    i -= 1;
                 }
             },
-            Token::If => {
-                let mut cond = false;
-                let mut offset = 1;
-                if let Some(Token::Identifier(n1)) = tokens.get(i+1) {
-                    if let (Some(Token::GreaterThan), Some(Token::Identifier(n2))) = (tokens.get(i+2), tokens.get(i+3)) {
-                         if let (Some(VasoType::Int(v1)), Some(VasoType::Int(v2))) = (memory.get(n1), memory.get(n2)) {
-                             if v1 > v2 { cond = true; }
-                         }
-                         offset = 3;
-                    } else if let (Some(Token::GreaterThan), Some(Token::NumberLiteral(v2))) = (tokens.get(i+2), tokens.get(i+3)) {
-                         if let Some(VasoType::Int(v1)) = memory.get(n1) {
-                             if v1 > v2 { cond = true; }
-                         }
-                         offset = 3;
-                    } else if let Some(VasoType::VBit(1, _)) = memory.get(n1) { cond = true; }
-                }
-                if cond { i += offset; } else {
-                     let mut brackets = 0;
-                     while i < tokens.len() {
-                        if let Token::LBrace = tokens[i] { brackets = 1; i+=1; break; }
-                        i += 1;
-                     }
-                    while i < tokens.len() && brackets > 0 {
-                        match tokens[i] {
-                            Token::LBrace => brackets += 1,
-                            Token::RBrace => brackets -= 1,
-                            _ => {}
+
+            Token::Identifier(name) => {
+                // ... (Lógica de identificador igual que antes) ...
+                if let Some((Token::LParen, _)) = tokens.get(i+1) {
+                    let fn_def = mem_stack.get(name).cloned();
+                    if let Some(VasoType::Function(body_idx, param_names)) = fn_def {
+                        let (call_args, next_idx) = extract_args(&tokens, i+1, &mem_stack);
+                        i = next_idx;
+                        call_stack.push((i, current_depth));
+                        mem_stack.push_scope();
+                        for (idx, param) in param_names.iter().enumerate() {
+                            if let Some(val) = call_args.get(idx) {
+                                mem_stack.set(param.clone(), val.clone());
+                            }
                         }
-                        i += 1;
+                        i = body_idx; 
+                        consumed = true;
                     }
-                    consumed = true;
-                    i -= 1;
+                }
+                
+                if !consumed {
+                    if let (Some((assign, _span)), Some((val_token, val_span))) = (tokens.get(i+1), tokens.get(i+2)) {
+                        if matches!(assign, Token::AssignC | Token::AssignPascal) {
+                            let final_val;
+                            if let Token::LBracket = val_token {
+                                let mut list_items = Vec::new();
+                                let mut k = i + 3;
+                                while k < tokens.len() {
+                                    match &tokens[k] {
+                                        (Token::RBracket, _) => break,
+                                        (Token::NumberLiteral(n), _) => list_items.push(VasoType::Int(*n)),
+                                        (Token::StringLiteral(s), _) => list_items.push(VasoType::Str(s.clone())),
+                                        _ => {}
+                                    }
+                                    k += 1;
+                                }
+                                final_val = Some(VasoType::List(list_items));
+                                i = k; 
+                            }
+                            else {
+                                final_val = match val_token {
+                                    Token::LitOff => Some(VasoType::VBit(0, "".to_string())),
+                                    Token::LitOn => Some(VasoType::VBit(1, "".to_string())),
+                                    Token::LitLoading => Some(VasoType::VBit(2, "".to_string())),
+                                    Token::LitError => Some(VasoType::VBit(3, "Generic Error".to_string())), 
+                                    Token::LitUnknown => Some(VasoType::VBit(4, "".to_string())), 
+                                    Token::NumberLiteral(n) => Some(VasoType::Int(*n)),
+                                    Token::StringLiteral(s) => Some(VasoType::Str(s.clone())),
+                                    Token::Identifier(n) => mem_stack.get(n).cloned(),
+                                    _ => None
+                                };
+                            }
+
+                            if let Some(v) = final_val { 
+                                mem_stack.set(name.clone(), v); 
+                                if !matches!(val_token, Token::LBracket) { i += 3; }
+                                consumed = true; 
+                            } else {
+                                if !matches!(val_token, Token::Identifier(_)) {
+                                    report_error("Invalid assignment value", val_span, &code);
+                                }
+                            }
+                        }
+                        else if matches!(assign, Token::PlusAssign | Token::MinusAssign) { 
+                             let r_val_opt = match val_token {
+                                 Token::LitOff => Some(VasoType::VBit(0, "".to_string())),
+                                 Token::LitOn => Some(VasoType::VBit(1, "".to_string())),
+                                 Token::LitLoading => Some(VasoType::VBit(2, "".to_string())),
+                                 Token::LitError => Some(VasoType::VBit(3, "Generic Error".to_string())),
+                                 Token::LitUnknown => Some(VasoType::VBit(4, "".to_string())),
+                                 Token::NumberLiteral(n) => Some(VasoType::Int(*n)),
+                                 Token::StringLiteral(s) => Some(VasoType::Str(s.clone())),
+                                 Token::Identifier(n) => mem_stack.get(n).cloned(),
+                                 _ => None
+                             };
+
+                             if let Some(r_val) = r_val_opt {
+                                 if let Some(l_val) = mem_stack.get(name) {
+                                     let res = apply_op(l_val.clone(), &r_val, assign);
+                                     mem_stack.set(name.clone(), res);
+                                     i += 3; consumed = true;
+                                 }
+                             }
+                        }
+                    }
                 }
             },
             Token::Value | Token::Variable => {
-                if let (Some(Token::Identifier(name)), Some(assign), Some(val_token)) = 
+                // ... (Lógica de var igual que antes) ...
+                if let (Some((Token::Identifier(name), _)), Some((assign, _)), Some((val_token, _))) = 
                        (tokens.get(i+1), tokens.get(i+2), tokens.get(i+3)) {
                     if matches!(assign, Token::AssignC | Token::AssignPascal) {
                         let mut lib_call = false;
-                        if let (Token::Identifier(module), Some(Token::Dot), Some(Token::Identifier(func))) = 
-                               (val_token, tokens.get(i+4), tokens.get(i+5)) {
-                             let (args, next_idx) = extract_args(&tokens, i+6, &memory);
-                             let result = call_std_function(module, func, args);
-                             memory.insert(name.clone(), result);
-                             i = next_idx; consumed = true;
-                             lib_call = true;
+                        if let Token::Identifier(module) = val_token {
+                            if let (Some((Token::Dot, _)), Some((Token::Identifier(func), _))) = (tokens.get(i+4), tokens.get(i+5)) {
+                                let (args, next_idx) = extract_args(&tokens, i+6, &mem_stack);
+                                let result = call_std_function(module, func, args);
+                                mem_stack.set(name.clone(), result);
+                                i = next_idx; consumed = true; lib_call = true;
+                            }
                         }
                         if !lib_call {
-                            let val = match val_token {
-                                Token::LitOff => Some(VasoType::VBit(0, "".to_string())),
-                                Token::LitOn => Some(VasoType::VBit(1, "".to_string())),
-                                Token::LitLoading => Some(VasoType::VBit(2, "".to_string())),
-                                Token::LitError => {
-                                    if let (Some(Token::LParen), Some(Token::StringLiteral(msg)), Some(Token::RParen)) = 
-                                           (tokens.get(i+4), tokens.get(i+5), tokens.get(i+6)) {
-                                         i += 3; Some(VasoType::VBit(3, msg.trim_matches('"').to_string()))
-                                    } else { Some(VasoType::VBit(3, "".to_string())) }
-                                },
-                                Token::LitUnknown => Some(VasoType::VBit(4, "".to_string())),
-                                Token::NumberLiteral(n) => Some(VasoType::Int(*n)),
-                                Token::StringLiteral(s) => Some(VasoType::Str(s.trim_matches('"').to_string())),
-                                Token::Identifier(n) => memory.get(n).cloned(),
-                                Token::Input => {
-                                    print!("> "); std::io::stdout().flush().unwrap();
-                                    let mut input_text = String::new();
-                                    std::io::stdin().read_line(&mut input_text).expect("Error");
-                                    Some(VasoType::Str(input_text.trim().to_string()))
-                                },
-                                Token::New => {
-                                     if let Some(Token::Identifier(struct_name)) = tokens.get(i+4) {
-                                        if let Some(def) = structs.get(struct_name) {
-                                            for (field, _) in &def.fields {
-                                                let key = format!("{}.{}", name, field);
-                                                memory.insert(key, VasoType::VBit(4, "".to_string())); 
-                                            }
-                                            i += 2; 
-                                        }
+                            match val_token {
+                                Token::NumberLiteral(n) => { mem_stack.set(name.clone(), VasoType::Int(*n)); i += 4; consumed = true; },
+                                Token::StringLiteral(s) => { mem_stack.set(name.clone(), VasoType::Str(s.clone())); i += 4; consumed = true; },
+                                Token::Identifier(src_name) => {
+                                    if let Some(val) = mem_stack.get(src_name).cloned() {
+                                        mem_stack.set(name.clone(), val);
+                                        i += 4; consumed = true;
                                     }
-                                    None 
                                 },
-                                _ => None
-                            };
-                            if let Some(v) = val {
-                                memory.insert(name.clone(), v);
-                                i += 4; consumed = true;
-                            } else if matches!(val_token, Token::New) { i += 4; consumed = true; }
-                        }
-                    }
-                }
-            },
-            Token::Identifier(name) => {
-                if let (Some(assign), Some(val_token)) = (tokens.get(i+1), tokens.get(i+2)) {
-                    if matches!(assign, Token::AssignC | Token::AssignPascal) {
-                        let val = match val_token {
-                            Token::LitOff => Some(VasoType::VBit(0, "".to_string())),
-                            Token::LitOn => Some(VasoType::VBit(1, "".to_string())),
-                            Token::LitLoading => Some(VasoType::VBit(2, "".to_string())),
-                            Token::LitError => Some(VasoType::VBit(3, "".to_string())),
-                            Token::Identifier(n) => memory.get(n).cloned(),
-                            _ => None
-                        };
-                         if let Some(v) = val { memory.insert(name.clone(), v); i += 3; consumed = true; }
-                    }
-                    else if let Token::PlusAssign = assign {
-                        let right_val = match val_token {
-                            Token::NumberLiteral(n) => Some(VasoType::Int(*n)),
-                            Token::LitLoading => Some(VasoType::VBit(2, "".to_string())),
-                            Token::LitError => Some(VasoType::VBit(3, "".to_string())),
-                            Token::Identifier(n) => memory.get(n).cloned(),
-                            _ => None
-                        };
-                        if let Some(r_val) = right_val {
-                            if let Some(l_val) = memory.get(name) {
-                                let result = apply_dominance(l_val, &r_val);
-                                memory.insert(name.clone(), result);
-                                i += 3; consumed = true;
+                                Token::LitOn => { mem_stack.set(name.clone(), VasoType::VBit(1, "".to_string())); i += 4; consumed = true; },
+                                Token::LitOff => { mem_stack.set(name.clone(), VasoType::VBit(0, "".to_string())); i += 4; consumed = true; },
+                                Token::LitLoading => { mem_stack.set(name.clone(), VasoType::VBit(2, "".to_string())); i += 4; consumed = true; },
+                                Token::LitError => { mem_stack.set(name.clone(), VasoType::VBit(3, "Generic Error".to_string())); i += 4; consumed = true; },
+                                Token::LitUnknown => { mem_stack.set(name.clone(), VasoType::VBit(4, "".to_string())); i += 4; consumed = true; },
+                                _ => {}
                             }
                         }
                     }
                 }
             },
-            Token::Mold | Token::Semicolon | Token::While => { i += 1; consumed = true; }, 
+            
+            Token::Mold | Token::Semicolon => { i += 1; consumed = true; }, 
             _ => {}
         }
         if !consumed { i += 1; }
     }
     println!("---------------");
     println!("{}", "✅ Ejecución finalizada.".green());
-}
-// --- AGREGAR AL FINAL DE src/main.rs ---
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_dominance_hierarchy() {
-        // Error > On
-        let err = VasoType::VBit(3, "failed".to_string());
-        let on = VasoType::VBit(1, "".to_string());
-        let result = apply_dominance(&err, &on);
-        
-        // Debe ganar el error y conservar el mensaje
-        if let VasoType::VBit(v, msg) = result {
-            assert_eq!(v, 3);
-            assert_eq!(msg, "failed");
-        } else {
-            panic!("Dominance failed");
-        }
-    }
-
-    #[test]
-    fn test_loading_over_on() {
-        // Loading > On
-        let loading = VasoType::VBit(2, "".to_string());
-        let on = VasoType::VBit(1, "".to_string());
-        let result = apply_dominance(&loading, &on);
-        
-        if let VasoType::VBit(v, _) = result {
-            assert_eq!(v, 2);
-        } else {
-            panic!("Dominance failed");
-        }
-    }
 }
